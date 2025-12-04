@@ -59,9 +59,9 @@ def train_yolo(
     name: str,
     pretrained: bool = True,
     patience: int = 50,
-    save_period: int = 10,
     workers: int = 8,
-    verbose: bool = True
+    verbose: bool = True,
+    augment: bool = True
 ) -> Path:
     """
     Train YOLOv8 model.
@@ -77,7 +77,6 @@ def train_yolo(
         name: Experiment name
         pretrained: Use pretrained weights
         patience: Early stopping patience
-        save_period: Save checkpoint every N epochs
         workers: Number of data loader workers
         verbose: Verbose output
         
@@ -124,8 +123,58 @@ def train_yolo(
     
     # Train
     logger.info("\nStarting training...")
+    if augment:
+        logger.info("Using extensive augmentations: brightness, blur, perspective, rotation, scale, cutout")
+    
+    # Setup live training monitor
+    from ultralytics.utils.callbacks.base import add_integration_callbacks
+    
+    def on_train_epoch_end(trainer):
+        """Callback to print live training metrics after each epoch"""
+        epoch = trainer.epoch + 1
+        epochs_total = trainer.epochs
+        metrics = trainer.metrics
+        
+        # Extract key metrics
+        box_loss = metrics.get('train/box_loss', 0)
+        cls_loss = metrics.get('train/cls_loss', 0)
+        dfl_loss = metrics.get('train/dfl_loss', 0)
+        
+        # Validation metrics
+        map50 = metrics.get('metrics/mAP50(B)', 0)
+        map50_95 = metrics.get('metrics/mAP50-95(B)', 0)
+        precision = metrics.get('metrics/precision(B)', 0)
+        recall = metrics.get('metrics/recall(B)', 0)
+        
+        # Print live update
+        print(f"\n{'='*70}")
+        print(f"[EPOCH {epoch}/{epochs_total}] TRAINING PROGRESS")
+        print(f"{'='*70}")
+        print(f"  Train Losses:")
+        print(f"    Box Loss:  {box_loss:.4f}")
+        print(f"    Cls Loss:  {cls_loss:.4f}")
+        print(f"    DFL Loss:  {dfl_loss:.4f}")
+        if map50 > 0:  # Only show if validation ran
+            print(f"  Validation Metrics:")
+            print(f"    mAP@0.5:      {map50:.4f}")
+            print(f"    mAP@0.5:0.95: {map50_95:.4f}")
+            print(f"    Precision:    {precision:.4f}")
+            print(f"    Recall:       {recall:.4f}")
+        print(f"{'='*70}\n")
+        
+        # Also log to file
+        log_file = Path("logs/training_yolov8m_seg.log")
+        log_file.parent.mkdir(exist_ok=True)
+        with open(log_file, 'a') as f:
+            f.write(f"[EPOCH {epoch}/{epochs_total}] ")
+            f.write(f"Box: {box_loss:.4f}, Cls: {cls_loss:.4f}, DFL: {dfl_loss:.4f}")
+            if map50 > 0:
+                f.write(f", mAP@0.5: {map50:.4f}, mAP@0.5:0.95: {map50_95:.4f}")
+            f.write("\n")
+    
     try:
-        results = model.train(
+        # Build training arguments
+        train_args = dict(
             data=str(data_yaml),
             epochs=epochs,
             imgsz=imgsz,
@@ -135,7 +184,6 @@ def train_yolo(
             name=name,
             pretrained=pretrained,
             patience=patience,
-            save_period=save_period,
             workers=workers,
             verbose=verbose,
             exist_ok=True,
@@ -148,6 +196,32 @@ def train_yolo(
             cos_lr=True,  # Cosine learning rate scheduler
             close_mosaic=10  # Disable mosaic last N epochs
         )
+        
+        # Add extensive augmentations if enabled
+        if augment:
+            train_args.update({
+                # Extensive augmentation parameters
+                'hsv_h': 0.015,      # HSV-Hue augmentation (fraction)
+                'hsv_s': 0.7,        # HSV-Saturation augmentation (fraction)
+                'hsv_v': 0.4,        # HSV-Value augmentation (fraction) - brightness
+                'degrees': 10.0,     # Image rotation ±10 degrees
+                'translate': 0.1,    # Image translation (fraction)
+                'scale': 0.2,        # Image scale ±20%
+                'shear': 0.0,        # Image shear (degrees)
+                'perspective': 0.001,# Image perspective warp
+                'flipud': 0.0,       # Image flip up-down probability
+                'fliplr': 0.5,       # Image flip left-right probability
+                'mosaic': 1.0,       # Mosaic augmentation probability
+                'mixup': 0.1,        # Mixup augmentation probability
+                'copy_paste': 0.1,   # Copy-paste augmentation probability
+                'erasing': 0.4,      # Random erasing probability (cutout)
+                'crop_fraction': 1.0 # Crop fraction
+            })
+        
+        # Register callback for live monitoring
+        model.add_callback('on_train_epoch_end', on_train_epoch_end)
+        
+        results = model.train(**train_args)
         
         logger.info("\nTraining completed successfully!")
         
