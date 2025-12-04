@@ -1,0 +1,10 @@
+===== Command Log =====
+mkdir -p logs backups outputs
+STEP 0: Activating existing .venv
+STEP 1: Finding base weight
+STEP 2: Checking input video
+STEP 3: Checking dataset config
+STEP 4: Running baseline inference
+python src/run_demo.py --weights yolov8n.pt --video datasets/samples/my_road_video.mp4 --output outputs/ --conf 0.25
+STEP 5: Analyzing baseline results
+STEP 7: Finalizing outputs
