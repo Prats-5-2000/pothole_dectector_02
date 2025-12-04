@@ -126,11 +126,23 @@ def train_yolo(
     if augment:
         logger.info("Using extensive augmentations: brightness, blur, perspective, rotation, scale, cutout")
     
-    # Setup live training monitor
+    # Setup live training monitor with TensorBoard
     from ultralytics.utils.callbacks.base import add_integration_callbacks
+    from torch.utils.tensorboard import SummaryWriter
+    
+    # Initialize TensorBoard writer
+    tb_dir = Path(project) / "tensorboard" / name
+    tb_dir.mkdir(parents=True, exist_ok=True)
+    tb_writer = SummaryWriter(log_dir=str(tb_dir))
+    logger.info(f"TensorBoard logging to: {tb_dir}")
+    logger.info(f"Start TensorBoard with: tensorboard --logdir {project}/tensorboard --bind_all")
+    
+    # Checkpoint directory
+    ckpt_dir = Path(project) / name / "weights"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
     
     def on_train_epoch_end(trainer):
-        """Callback to print live training metrics after each epoch"""
+        """Enhanced callback: live metrics, TensorBoard logging, and checkpoint saving"""
         epoch = trainer.epoch + 1
         epochs_total = trainer.epochs
         metrics = trainer.metrics
@@ -146,6 +158,12 @@ def train_yolo(
         precision = metrics.get('metrics/precision(B)', 0)
         recall = metrics.get('metrics/recall(B)', 0)
         
+        # Estimate ETA (simple based on epoch time)
+        elapsed_time = getattr(trainer, 'train_time_elapsed', 0)
+        epochs_remaining = epochs_total - epoch
+        eta_seconds = (elapsed_time / epoch * epochs_remaining) if epoch > 0 else 0
+        eta_mins = int(eta_seconds / 60)
+        
         # Print live update
         print(f"\n{'='*70}")
         print(f"[EPOCH {epoch}/{epochs_total}] TRAINING PROGRESS")
@@ -160,17 +178,62 @@ def train_yolo(
             print(f"    mAP@0.5:0.95: {map50_95:.4f}")
             print(f"    Precision:    {precision:.4f}")
             print(f"    Recall:       {recall:.4f}")
+        if eta_mins > 0:
+            print(f"  ETA: ~{eta_mins} minutes")
         print(f"{'='*70}\n")
         
-        # Also log to file
-        log_file = Path("logs/training_yolov8m_seg.log")
+        # Log to file
+        log_file = Path("logs/training_yolov8m_det.log")
         log_file.parent.mkdir(exist_ok=True)
         with open(log_file, 'a') as f:
             f.write(f"[EPOCH {epoch}/{epochs_total}] ")
             f.write(f"Box: {box_loss:.4f}, Cls: {cls_loss:.4f}, DFL: {dfl_loss:.4f}")
             if map50 > 0:
-                f.write(f", mAP@0.5: {map50:.4f}, mAP@0.5:0.95: {map50_95:.4f}")
+                f.write(f", mAP@0.5: {map50:.4f}, mAP@0.5:0.95: {map50_95:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}")
             f.write("\n")
+        
+        # TensorBoard logging
+        tb_writer.add_scalar('Loss/box_loss', box_loss, epoch)
+        tb_writer.add_scalar('Loss/cls_loss', cls_loss, epoch)
+        tb_writer.add_scalar('Loss/dfl_loss', dfl_loss, epoch)
+        if map50 > 0:
+            tb_writer.add_scalar('Metrics/mAP@0.5', map50, epoch)
+            tb_writer.add_scalar('Metrics/mAP@0.5:0.95', map50_95, epoch)
+            tb_writer.add_scalar('Metrics/precision', precision, epoch)
+            tb_writer.add_scalar('Metrics/recall', recall, epoch)
+        tb_writer.flush()
+        
+        # Save checkpoint every 5 epochs
+        if epoch % 5 == 0:
+            ckpt_path = ckpt_dir / f"epoch_{epoch:02d}.pt"
+            try:
+                import shutil
+                last_ckpt = ckpt_dir / "last.pt"
+                if last_ckpt.exists():
+                    shutil.copy2(last_ckpt, ckpt_path)
+                    logger.info(f"Checkpoint saved: {ckpt_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save checkpoint: {e}")
+    
+    # Detect AMP support
+    amp_supported = False
+    if device in ['cuda', 'mps']:
+        try:
+            # Test if autocast is supported
+            if device == 'cuda':
+                from torch.cuda.amp import autocast, GradScaler
+                amp_supported = True
+                logger.info("AMP (Automatic Mixed Precision) enabled for CUDA")
+            elif device == 'mps':
+                # MPS AMP support is limited, check PyTorch version
+                import torch
+                if hasattr(torch, 'autocast') and torch.__version__ >= '2.0':
+                    amp_supported = True
+                    logger.info("AMP enabled for MPS (PyTorch 2.0+)")
+                else:
+                    logger.info("MPS detected but AMP not fully supported, using FP32")
+        except Exception as e:
+            logger.warning(f"AMP check failed: {e}, using FP32")
     
     try:
         # Build training arguments
@@ -194,7 +257,8 @@ def train_yolo(
             cache=False,  # Don't cache on disk for Mac compatibility
             rect=False,   # No rect training for simplicity
             cos_lr=True,  # Cosine learning rate scheduler
-            close_mosaic=10  # Disable mosaic last N epochs
+            close_mosaic=10,  # Disable mosaic last N epochs
+            amp=amp_supported  # Enable AMP if supported
         )
         
         # Add extensive augmentations if enabled
@@ -222,6 +286,10 @@ def train_yolo(
         model.add_callback('on_train_epoch_end', on_train_epoch_end)
         
         results = model.train(**train_args)
+        
+        # Close TensorBoard writer
+        tb_writer.close()
+        logger.info("TensorBoard writer closed")
         
         logger.info("\nTraining completed successfully!")
         
@@ -270,8 +338,8 @@ Examples:
     parser.add_argument(
         '--model',
         type=str,
-        default='yolov8n.pt',
-        help='YOLO model variant (default: yolov8n.pt). Options: yolov8n, yolov8s, yolov8m, yolov8l, yolov8x'
+        default='yolov8m.pt',
+        help='YOLO model variant (default: yolov8m.pt). Options: yolov8n, yolov8s, yolov8m, yolov8l, yolov8x'
     )
     
     parser.add_argument(
@@ -284,8 +352,8 @@ Examples:
     parser.add_argument(
         '--epochs',
         type=int,
-        default=50,
-        help='Number of training epochs (default: 50)'
+        default=30,
+        help='Number of training epochs (default: 30)'
     )
     
     parser.add_argument(
@@ -312,22 +380,22 @@ Examples:
     parser.add_argument(
         '--project',
         type=str,
-        default='runs/detect',
-        help='Project directory (default: runs/detect)'
+        default='runs/train',
+        help='Project directory (default: runs/train)'
     )
     
     parser.add_argument(
         '--name',
         type=str,
-        default='video_merged',
-        help='Experiment name (default: video_merged)'
+        default='yolov8m_det',
+        help='Experiment name (default: yolov8m_det)'
     )
     
     parser.add_argument(
         '--patience',
         type=int,
-        default=50,
-        help='Early stopping patience (default: 50)'
+        default=5,
+        help='Early stopping patience (default: 5)'
     )
     
     parser.add_argument(

@@ -62,7 +62,7 @@ echo -e "${GREEN}✓${NC} Dataset config found"
 mkdir -p logs
 
 # Clear previous log
-LOG_FILE="logs/training_yolov8m_seg.log"
+LOG_FILE="logs/training_yolov8m_det.log"
 > "$LOG_FILE"
 echo -e "${GREEN}✓${NC} Log file: $LOG_FILE"
 
@@ -78,7 +78,7 @@ fi
 echo "Configuration:"
 echo "  Model:      yolov8m.pt (detection)"
 echo "  Dataset:    configs/dataset_video.yaml"
-echo "  Epochs:     50"
+echo "  Epochs:     30"
 echo "  Image size: 640"
 echo "  Batch size: 8"
 echo "  Device:     $DEVICE"
@@ -90,13 +90,13 @@ echo ""
 python3 src/train_yolo.py \
     --model yolov8m.pt \
     --data configs/dataset_video.yaml \
-    --epochs 50 \
+    --epochs 30 \
     --imgsz 640 \
     --batch 8 \
     --device "$DEVICE" \
     --project runs/train \
     --name yolov8m_det \
-    --patience 20 \
+    --patience 5 \
     --workers 4 \
     --verbose \
     2>&1 | tee -a "$LOG_FILE"
