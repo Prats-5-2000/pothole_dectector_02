@@ -5,6 +5,25 @@ __pycache__/
 
 # C extensions
 *.so
+datasets/
+# Datasets (keep structure but ignore data files)
+datasets/processed_temp/
+datasets/merged/
+datasets/finetune/
+datasets/Video_dataset/*/rgb_frames/
+datasets/Video_dataset/*/mask_frames/
+
+# Training runs and outputs
+runs/
+outputs/
+backups/
+
+# Model weights (uncomment if you want to ignore weights)
+# *.pt
+
+# Temporary files
+*.tmp
+*.temp
 
 # Distribution / packaging
 .Python

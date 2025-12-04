@@ -1,0 +1,56 @@
+# Default Configuration for Pothole Detection Project
+# Adjust these parameters based on your dataset and requirements
+
+# Data Pipeline Settings
+data_pipeline:
+  fps: 1                    # Frames per second to extract from videos
+  min_area: 100            # Minimum detection area in pixels
+  max_workers: 4           # Parallel workers for processing
+  
+# Training Settings
+training:
+  model: "yolov8n.pt"      # Model variant (yolov8n, yolov8s, yolov8m, yolov8l, yolov8x)
+  epochs: 50               # Training epochs
+  batch_size: 16           # Batch size (auto-adjusted for CPU)
+  image_size: 640          # Input image size
+  patience: 50             # Early stopping patience
+  save_period: 10          # Save checkpoint every N epochs
+  workers: 8               # Data loader workers
+  device: "auto"           # Device: auto, cuda, mps, cpu
+
+# Inference Settings
+inference:
+  conf_threshold: 0.25     # Confidence threshold for detections
+  iou_threshold: 0.45      # NMS IoU threshold
+  tracker_iou: 0.3         # IoU threshold for tracking
+  save_first_frame: true   # Save first frame as image
+
+# Auto Fine-tuning Settings
+finetune:
+  max_iterations: 2        # Maximum fine-tuning iterations
+  pseudo_conf: 0.5         # Confidence threshold for pseudo-labels
+  min_box_area: 200        # Minimum box area for pseudo-labels (pixels)
+  epochs: 5                # Epochs per fine-tuning iteration
+  batch_size: 8            # Batch size for fine-tuning
+  max_pseudo_images: 200   # Maximum images to use for pseudo-labeling
+  
+# Paths
+paths:
+  video_dataset: "datasets/Video_dataset"
+  andrewmvd: "datasets/AndrewMVD pothole dataset"
+  merged: "datasets/merged"
+  config_yaml: "configs/dataset_video.yaml"
+  runs: "runs/detect"
+  outputs: "outputs"
+  backups: "backups"
+  processed_temp: "datasets/processed_temp"
+
+# Class Names
+classes:
+  - pothole
+
+# System Settings
+system:
+  check_disk_space: true
+  required_space_gb: 5.0
+  log_level: "INFO"        # DEBUG, INFO, WARNING, ERROR

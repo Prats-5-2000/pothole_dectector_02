@@ -1,0 +1,18 @@
+# Core ML and Computer Vision
+opencv-python>=4.8.0
+ultralytics>=8.0.0
+numpy>=1.24.0
+scikit-image>=0.21.0
+Pillow>=10.0.0
+
+# Progress and I/O
+tqdm>=4.65.0
+imageio>=2.31.0
+imageio-ffmpeg>=0.4.9
+
+# Data handling and analysis
+pandas>=2.0.0
+PyYAML>=6.0
+
+# Optional: uncomment if opencv-python fails on headless systems
+# opencv-python-headless>=4.8.0
