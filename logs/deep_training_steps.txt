@@ -1,0 +1,14 @@
+/Users/soumyajaiswal/Desktop/Prathamesh Patil/pothole_dectector_02/.venv/bin/python -c "
+import yaml
+with open('configs/dataset_video.yaml', 'r') as f:
+    config = yaml.safe_load(f)
+    print(f'Dataset path: {config[\"path\"]}')
+    print(f'Classes: {config[\"names\"]}')
+print('Checking image counts...')
+import os
+for split in ['train', 'val', 'test']:
+    img_dir = f'datasets/merged/images/{split}'
+    if os.path.exists(img_dir):
+        count = len([f for f in os.listdir(img_dir) if f.endswith(('.jpg', '.png'))])
+        print(f'  {split}: {count} images')
+"

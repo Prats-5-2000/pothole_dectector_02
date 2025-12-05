@@ -1,0 +1,7 @@
+path: /Users/soumyajaiswal/Desktop/Prathamesh Patil/pothole_dectector_02/datasets/merged
+train: images/train
+val: images/val
+test: images/test
+nc: 1
+names:
+- pothole

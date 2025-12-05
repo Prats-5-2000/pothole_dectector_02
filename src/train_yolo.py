@@ -59,9 +59,13 @@ def train_yolo(
     name: str,
     pretrained: bool = True,
     patience: int = 50,
-    save_period: int = 10,
     workers: int = 8,
-    verbose: bool = True
+    verbose: bool = True,
+    augment: bool = True,
+    copy_paste: float = 0.1,
+    mosaic: float = 1.0,
+    mixup: float = 0.1,
+    erasing: float = 0.4
 ) -> Path:
     """
     Train YOLOv8 model.
@@ -77,7 +81,6 @@ def train_yolo(
         name: Experiment name
         pretrained: Use pretrained weights
         patience: Early stopping patience
-        save_period: Save checkpoint every N epochs
         workers: Number of data loader workers
         verbose: Verbose output
         
@@ -124,8 +127,121 @@ def train_yolo(
     
     # Train
     logger.info("\nStarting training...")
+    if augment:
+        logger.info("Using extensive augmentations: brightness, blur, perspective, rotation, scale, cutout")
+    
+    # Setup live training monitor with TensorBoard
+    from ultralytics.utils.callbacks.base import add_integration_callbacks
+    from torch.utils.tensorboard import SummaryWriter
+    
+    # Initialize TensorBoard writer
+    tb_dir = Path(project) / "tensorboard" / name
+    tb_dir.mkdir(parents=True, exist_ok=True)
+    tb_writer = SummaryWriter(log_dir=str(tb_dir))
+    logger.info(f"TensorBoard logging to: {tb_dir}")
+    logger.info(f"Start TensorBoard with: tensorboard --logdir {project}/tensorboard --bind_all")
+    
+    # Checkpoint directory
+    ckpt_dir = Path(project) / name / "weights"
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    
+    def on_train_epoch_end(trainer):
+        """Enhanced callback: live metrics, TensorBoard logging, and checkpoint saving"""
+        epoch = trainer.epoch + 1
+        epochs_total = trainer.epochs
+        metrics = trainer.metrics
+        
+        # Extract key metrics
+        box_loss = metrics.get('train/box_loss', 0)
+        cls_loss = metrics.get('train/cls_loss', 0)
+        dfl_loss = metrics.get('train/dfl_loss', 0)
+        
+        # Validation metrics
+        map50 = metrics.get('metrics/mAP50(B)', 0)
+        map50_95 = metrics.get('metrics/mAP50-95(B)', 0)
+        precision = metrics.get('metrics/precision(B)', 0)
+        recall = metrics.get('metrics/recall(B)', 0)
+        
+        # Estimate ETA (simple based on epoch time)
+        elapsed_time = getattr(trainer, 'train_time_elapsed', 0)
+        epochs_remaining = epochs_total - epoch
+        eta_seconds = (elapsed_time / epoch * epochs_remaining) if epoch > 0 else 0
+        eta_mins = int(eta_seconds / 60)
+        
+        # Print live update
+        print(f"\n{'='*70}")
+        print(f"[EPOCH {epoch}/{epochs_total}] TRAINING PROGRESS")
+        print(f"{'='*70}")
+        print(f"  Train Losses:")
+        print(f"    Box Loss:  {box_loss:.4f}")
+        print(f"    Cls Loss:  {cls_loss:.4f}")
+        print(f"    DFL Loss:  {dfl_loss:.4f}")
+        if map50 > 0:  # Only show if validation ran
+            print(f"  Validation Metrics:")
+            print(f"    mAP@0.5:      {map50:.4f}")
+            print(f"    mAP@0.5:0.95: {map50_95:.4f}")
+            print(f"    Precision:    {precision:.4f}")
+            print(f"    Recall:       {recall:.4f}")
+        if eta_mins > 0:
+            print(f"  ETA: ~{eta_mins} minutes")
+        print(f"{'='*70}\n")
+        
+        # Log to file
+        log_file = Path("logs/training_yolov8m_det.log")
+        log_file.parent.mkdir(exist_ok=True)
+        with open(log_file, 'a') as f:
+            f.write(f"[EPOCH {epoch}/{epochs_total}] ")
+            f.write(f"Box: {box_loss:.4f}, Cls: {cls_loss:.4f}, DFL: {dfl_loss:.4f}")
+            if map50 > 0:
+                f.write(f", mAP@0.5: {map50:.4f}, mAP@0.5:0.95: {map50_95:.4f}, Precision: {precision:.4f}, Recall: {recall:.4f}")
+            f.write("\n")
+        
+        # TensorBoard logging
+        tb_writer.add_scalar('Loss/box_loss', box_loss, epoch)
+        tb_writer.add_scalar('Loss/cls_loss', cls_loss, epoch)
+        tb_writer.add_scalar('Loss/dfl_loss', dfl_loss, epoch)
+        if map50 > 0:
+            tb_writer.add_scalar('Metrics/mAP@0.5', map50, epoch)
+            tb_writer.add_scalar('Metrics/mAP@0.5:0.95', map50_95, epoch)
+            tb_writer.add_scalar('Metrics/precision', precision, epoch)
+            tb_writer.add_scalar('Metrics/recall', recall, epoch)
+        tb_writer.flush()
+        
+        # Save checkpoint every 5 epochs
+        if epoch % 5 == 0:
+            ckpt_path = ckpt_dir / f"epoch_{epoch:02d}.pt"
+            try:
+                import shutil
+                last_ckpt = ckpt_dir / "last.pt"
+                if last_ckpt.exists():
+                    shutil.copy2(last_ckpt, ckpt_path)
+                    logger.info(f"Checkpoint saved: {ckpt_path}")
+            except Exception as e:
+                logger.warning(f"Failed to save checkpoint: {e}")
+    
+    # Detect AMP support
+    amp_supported = False
+    if device in ['cuda', 'mps']:
+        try:
+            # Test if autocast is supported
+            if device == 'cuda':
+                from torch.cuda.amp import autocast, GradScaler
+                amp_supported = True
+                logger.info("AMP (Automatic Mixed Precision) enabled for CUDA")
+            elif device == 'mps':
+                # MPS AMP support is limited, check PyTorch version
+                import torch
+                if hasattr(torch, 'autocast') and torch.__version__ >= '2.0':
+                    amp_supported = True
+                    logger.info("AMP enabled for MPS (PyTorch 2.0+)")
+                else:
+                    logger.info("MPS detected but AMP not fully supported, using FP32")
+        except Exception as e:
+            logger.warning(f"AMP check failed: {e}, using FP32")
+    
     try:
-        results = model.train(
+        # Build training arguments
+        train_args = dict(
             data=str(data_yaml),
             epochs=epochs,
             imgsz=imgsz,
@@ -135,7 +251,6 @@ def train_yolo(
             name=name,
             pretrained=pretrained,
             patience=patience,
-            save_period=save_period,
             workers=workers,
             verbose=verbose,
             exist_ok=True,
@@ -146,8 +261,39 @@ def train_yolo(
             cache=False,  # Don't cache on disk for Mac compatibility
             rect=False,   # No rect training for simplicity
             cos_lr=True,  # Cosine learning rate scheduler
-            close_mosaic=10  # Disable mosaic last N epochs
+            close_mosaic=10,  # Disable mosaic last N epochs
+            amp=amp_supported  # Enable AMP if supported
         )
+        
+        # Add extensive augmentations if enabled
+        if augment:
+            train_args.update({
+                # Extensive augmentation parameters
+                'hsv_h': 0.015,      # HSV-Hue augmentation (fraction)
+                'hsv_s': 0.7,        # HSV-Saturation augmentation (fraction)
+                'hsv_v': 0.4,        # HSV-Value augmentation (fraction) - brightness
+                'degrees': 10.0,     # Image rotation ±10 degrees
+                'translate': 0.1,    # Image translation (fraction)
+                'scale': 0.2,        # Image scale ±20%
+                'shear': 0.0,        # Image shear (degrees)
+                'perspective': 0.001,# Image perspective warp
+                'flipud': 0.0,       # Image flip up-down probability
+                'fliplr': 0.5,       # Image flip left-right probability
+                'mosaic': mosaic,       # Mosaic augmentation probability
+                'mixup': mixup,        # Mixup augmentation probability
+                'copy_paste': copy_paste,   # Copy-paste augmentation probability
+                'erasing': erasing,      # Random erasing probability (cutout)
+                'crop_fraction': 1.0 # Crop fraction
+            })
+        
+        # Register callback for live monitoring
+        model.add_callback('on_train_epoch_end', on_train_epoch_end)
+        
+        results = model.train(**train_args)
+        
+        # Close TensorBoard writer
+        tb_writer.close()
+        logger.info("TensorBoard writer closed")
         
         logger.info("\nTraining completed successfully!")
         
@@ -196,8 +342,8 @@ Examples:
     parser.add_argument(
         '--model',
         type=str,
-        default='yolov8n.pt',
-        help='YOLO model variant (default: yolov8n.pt). Options: yolov8n, yolov8s, yolov8m, yolov8l, yolov8x'
+        default='yolov8m.pt',
+        help='YOLO model variant (default: yolov8m.pt). Options: yolov8n, yolov8s, yolov8m, yolov8l, yolov8x'
     )
     
     parser.add_argument(
@@ -210,8 +356,8 @@ Examples:
     parser.add_argument(
         '--epochs',
         type=int,
-        default=50,
-        help='Number of training epochs (default: 50)'
+        default=30,
+        help='Number of training epochs (default: 30)'
     )
     
     parser.add_argument(
@@ -238,22 +384,22 @@ Examples:
     parser.add_argument(
         '--project',
         type=str,
-        default='runs/detect',
-        help='Project directory (default: runs/detect)'
+        default='runs/train',
+        help='Project directory (default: runs/train)'
     )
     
     parser.add_argument(
         '--name',
         type=str,
-        default='video_merged',
-        help='Experiment name (default: video_merged)'
+        default='yolov8m_det',
+        help='Experiment name (default: yolov8m_det)'
     )
     
     parser.add_argument(
         '--patience',
         type=int,
-        default=50,
-        help='Early stopping patience (default: 50)'
+        default=5,
+        help='Early stopping patience (default: 5)'
     )
     
     parser.add_argument(
@@ -285,6 +431,34 @@ Examples:
         '--verbose',
         action='store_true',
         help='Verbose output'
+    )
+    
+    parser.add_argument(
+        '--copy_paste',
+        type=float,
+        default=0.1,
+        help='Copy-paste augmentation probability (default: 0.1)'
+    )
+    
+    parser.add_argument(
+        '--mosaic',
+        type=float,
+        default=1.0,
+        help='Mosaic augmentation probability (default: 1.0)'
+    )
+    
+    parser.add_argument(
+        '--mixup',
+        type=float,
+        default=0.1,
+        help='Mixup augmentation probability (default: 0.1)'
+    )
+    
+    parser.add_argument(
+        '--erasing',
+        type=float,
+        default=0.4,
+        help='Random erasing probability (default: 0.4)'
     )
     
     args = parser.parse_args()
@@ -321,7 +495,11 @@ Examples:
         pretrained=not args.no_pretrained,
         patience=args.patience,
         workers=args.workers,
-        verbose=args.verbose
+        verbose=args.verbose,
+        copy_paste=args.copy_paste,
+        mosaic=args.mosaic,
+        mixup=args.mixup,
+        erasing=args.erasing
     )
     
     logger.info("\n" + "="*50)
