@@ -33,11 +33,17 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
 # Check if virtual environment exists
-if [ -d "venv" ]; then
-    echo -e "${GREEN}✓${NC} Found virtual environment"
+if [ -d ".venv" ]; then
+    echo -e "${GREEN}✓${NC} Found virtual environment (.venv)"
+    source .venv/bin/activate
+elif [ -d "venv" ]; then
+    echo -e "${GREEN}✓${NC} Found virtual environment (venv)"
     source venv/bin/activate
+elif [ -d "env" ]; then
+    echo -e "${GREEN}✓${NC} Found virtual environment (env)"
+    source env/bin/activate
 else
-    echo -e "${YELLOW}⚠${NC} No virtual environment found at ./venv"
+    echo -e "${YELLOW}⚠${NC} No virtual environment found"
     echo "  Proceeding without venv activation..."
 fi
 

@@ -61,7 +61,11 @@ def train_yolo(
     patience: int = 50,
     workers: int = 8,
     verbose: bool = True,
-    augment: bool = True
+    augment: bool = True,
+    copy_paste: float = 0.1,
+    mosaic: float = 1.0,
+    mixup: float = 0.1,
+    erasing: float = 0.4
 ) -> Path:
     """
     Train YOLOv8 model.
@@ -275,10 +279,10 @@ def train_yolo(
                 'perspective': 0.001,# Image perspective warp
                 'flipud': 0.0,       # Image flip up-down probability
                 'fliplr': 0.5,       # Image flip left-right probability
-                'mosaic': 1.0,       # Mosaic augmentation probability
-                'mixup': 0.1,        # Mixup augmentation probability
-                'copy_paste': 0.1,   # Copy-paste augmentation probability
-                'erasing': 0.4,      # Random erasing probability (cutout)
+                'mosaic': mosaic,       # Mosaic augmentation probability
+                'mixup': mixup,        # Mixup augmentation probability
+                'copy_paste': copy_paste,   # Copy-paste augmentation probability
+                'erasing': erasing,      # Random erasing probability (cutout)
                 'crop_fraction': 1.0 # Crop fraction
             })
         
@@ -429,6 +433,34 @@ Examples:
         help='Verbose output'
     )
     
+    parser.add_argument(
+        '--copy_paste',
+        type=float,
+        default=0.1,
+        help='Copy-paste augmentation probability (default: 0.1)'
+    )
+    
+    parser.add_argument(
+        '--mosaic',
+        type=float,
+        default=1.0,
+        help='Mosaic augmentation probability (default: 1.0)'
+    )
+    
+    parser.add_argument(
+        '--mixup',
+        type=float,
+        default=0.1,
+        help='Mixup augmentation probability (default: 0.1)'
+    )
+    
+    parser.add_argument(
+        '--erasing',
+        type=float,
+        default=0.4,
+        help='Random erasing probability (default: 0.4)'
+    )
+    
     args = parser.parse_args()
     
     # Apply tiny mode settings
@@ -463,7 +495,11 @@ Examples:
         pretrained=not args.no_pretrained,
         patience=args.patience,
         workers=args.workers,
-        verbose=args.verbose
+        verbose=args.verbose,
+        copy_paste=args.copy_paste,
+        mosaic=args.mosaic,
+        mixup=args.mixup,
+        erasing=args.erasing
     )
     
     logger.info("\n" + "="*50)
